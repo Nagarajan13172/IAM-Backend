@@ -15,7 +15,7 @@ A production-ready **Role-Based Access Control (RBAC)** backend built with **Nod
 | bcryptjs | Password hashing |
 | dotenv | Environment variable management |
 | CORS | Cross-Origin Resource Sharing |
-| Nodemon | Auto-restart in development |
+| Nodemon | Auto-restart in development hello|
 
 ---
 
