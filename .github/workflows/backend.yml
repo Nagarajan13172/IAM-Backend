@@ -5,7 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
-  workflow_dispatch: # Allow manual trigger from GitHub UI
+  workflow_dispatch: # Allow manual trigger from GitHub Actions UI
 
 # Cancel in-progress runs when a new commit is pushed to the same branch
 concurrency:
@@ -19,15 +19,12 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
-  # Job 1 — Build & Validate
+  # Job 1 — Install & Validate
+  #   Runs on every push and pull request
   # ─────────────────────────────────────────────────────────────────────────
   build:
-    name: Build & Validate
+    name: Install & Validate
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: Backend
 
     steps:
       - name: Checkout code
@@ -38,17 +35,18 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          # package-lock.json is at the root of the repo (IAM-Backend/)
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify server can start
-        run: timeout 5 npm start || true
+      - name: Check server syntax
+        run: node --check server.js
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Job 2 — Build & Push Docker image
-  #   Only runs on pushes to 'main' (not on PRs)
+  # Job 2 — Build & Push Docker image to GHCR
+  #   Only runs on direct pushes to 'main' (not on PRs)
   # ─────────────────────────────────────────────────────────────────────────
   docker:
     name: Build & Push Docker Image
@@ -64,7 +62,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── Docker meta — auto-generate tags & labels ────────────────────────
+      # ── Auto-generate image tags & OCI labels ────────────────────────────
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -73,18 +71,16 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=ref,event=branch
-            type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # ── Set up QEMU for multi-arch builds ────────────────────────────────
+      # ── Multi-arch support ───────────────────────────────────────────────
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # ── Set up Docker Buildx ─────────────────────────────────────────────
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ── Authenticate with GitHub Container Registry ──────────────────────
+      # ── Login to GitHub Container Registry ──────────────────────────────
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -92,7 +88,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Build & push ─────────────────────────────────────────────────────
+      # ── Build & push image ───────────────────────────────────────────────
+      # context is '.' because the repo root IS the Backend folder
       - name: Build and push image
         id: build-push
         uses: docker/build-push-action@v5
@@ -106,8 +103,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Image digest output
-        run: echo "Image digest → ${{ steps.build-push.outputs.digest }}"
+      - name: Print image digest
+        run: echo "Pushed image digest → ${{ steps.build-push.outputs.digest }}"
 
   # ─────────────────────────────────────────────────────────────────────────
   # Job 3 — Security scan with Trivy
@@ -133,9 +130,9 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
-          exit-code: "0" # Don't fail the workflow; upload results to Security tab
+          exit-code: "0"
 
-      - name: Upload Trivy scan results to GitHub Security tab
+      - name: Upload results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
